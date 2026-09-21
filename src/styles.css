@@ -56,6 +56,11 @@ button { color: inherit; }
 .playback-control { height: 2rem; display: inline-flex; overflow: hidden; border: 2px solid var(--mist-dark); border-radius: 999px; background: var(--mist-mid); }
 .play-button { width: 2.25rem; border: 0; background: transparent; display: grid; place-items: center; cursor: pointer; }
 .play-button:hover, .play-button:focus-visible { background: var(--mist-light); outline: none; }
+.mute-button { position: relative; width: 2.25rem; border: 0; border-left: 2px solid var(--mist-dark); background: transparent; display: grid; place-items: center; cursor: pointer; }
+.mute-button:hover, .mute-button:focus-visible { background: var(--mist-light); outline: none; }
+.mute-button[aria-pressed="true"]::after { content: ""; position: absolute; width: 1.05rem; height: 2px; background: #10191d; transform: rotate(-45deg); }
+.sound-icon { position: relative; width: 12px; height: 10px; background: #10191d; clip-path: polygon(0 35%, 35% 35%, 75% 0, 75% 100%, 35% 65%, 0 65%); }
+.sound-icon.muted { opacity: .45; }
 .play-icon { width: 0; height: 0; margin-left: 2px; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #10191d; }
 .pause-icon { width: 9px; height: 10px; border-inline: 3px solid #10191d; }
 .playback-control select { border: 0; border-left: 2px solid var(--mist-dark); border-radius: 0; padding: 0 .45rem; background: var(--mist-mid); color: #10191d; cursor: pointer; font-size: .72rem; font-weight: 900; outline: none; }

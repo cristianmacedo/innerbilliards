@@ -472,6 +472,11 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   const path = trajectory.points
   const animatedBall = pointAlongPath(path, animationProgress)
   const pathLength = path.slice(1).reduce((sum, point, index) => sum + Math.hypot(point.x - path[index].x, point.y - path[index].y), 0)
+  let traveled = 0
+  const impactProgresses = path.slice(1).map((point, index) => {
+    traveled += Math.hypot(point.x - path[index].x, point.y - path[index].y)
+    return pathLength > 0 ? traveled / pathLength : 0
+  })
 
   context.clearRect(0, 0, width, height)
   context.save()
@@ -610,13 +615,16 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   }
 
   context.restore()
-  return { hits: Math.max(0, path.length - 2), pathLength, terminatedAtCorner: trajectory.terminatedAtCorner }
+  return { hits: Math.max(0, path.length - 2), pathLength, impactProgresses, terminatedAtCorner: trajectory.terminatedAtCorner }
 }
 
 export default function App() {
   const canvasRef = useRef(null)
   const cueCanvasRef = useRef(null)
   const dragRef = useRef(null)
+  const audioRef = useRef(null)
+  const mutedRef = useRef(false)
+  const impactProgressesRef = useRef([])
   const [shot, setShot] = useState(initialShot)
   const [shape, setShape] = useState(initialShape)
   const [geometryId, setGeometryId] = useState('rectangle')
@@ -630,6 +638,7 @@ export default function App() {
   const [animationProgress, setAnimationProgress] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
+  const [isMuted, setIsMuted] = useState(false)
   const [terminatedAtCorner, setTerminatedAtCorner] = useState(false)
 
   const renderTable = useCallback(() => {
@@ -637,6 +646,7 @@ export default function App() {
     const result = drawTable(canvasRef.current, cueCanvasRef.current, shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress, geometryId)
     setHits(result.hits)
     setPathLength(result.pathLength)
+    impactProgressesRef.current = result.impactProgresses
     setTerminatedAtCorner(result.terminatedAtCorner)
   }, [shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress, geometryId])
 
@@ -651,18 +661,50 @@ export default function App() {
     setAnimationProgress(0)
   }, [shot, shape, bounces, mode])
 
+  useEffect(() => () => {
+    audioRef.current?.close()
+  }, [])
+
+  function playImpact() {
+    const audio = audioRef.current
+    if (mutedRef.current || !audio || audio.state !== 'running') return
+    const now = audio.currentTime
+    const oscillator = audio.createOscillator()
+    const gain = audio.createGain()
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(115, now)
+    oscillator.frequency.exponentialRampToValueAtTime(68, now + 0.09)
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.exponentialRampToValueAtTime(0.11, now + 0.004)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11)
+    oscillator.connect(gain)
+    gain.connect(audio.destination)
+    oscillator.start(now)
+    oscillator.stop(now + 0.12)
+    oscillator.onended = () => {
+      oscillator.disconnect()
+      gain.disconnect()
+    }
+  }
+
   useEffect(() => {
     if (!isPlaying || pathLength <= 0) return undefined
     let frame
     let startedAt
     const startingProgress = animationProgress >= 1 ? 0 : animationProgress
     const duration = (Math.max(1800, pathLength * 4.5) * (1 - startingProgress)) / playbackSpeed
+    const impacts = impactProgressesRef.current.filter((progress) => progress > startingProgress + 0.0001)
+    let nextImpact = 0
 
     function animate(time) {
       if (!startedAt) startedAt = time
       const linearProgress = Math.min(1, (time - startedAt) / duration)
       const easedProgress = 1 - (1 - linearProgress) ** 2
       const progress = startingProgress + (1 - startingProgress) * easedProgress
+      while (nextImpact < impacts.length && progress >= impacts[nextImpact]) {
+        playImpact()
+        nextImpact += 1
+      }
       setAnimationProgress(progress)
       if (linearProgress < 1) frame = requestAnimationFrame(animate)
       else setIsPlaying(false)
@@ -809,7 +851,28 @@ export default function App() {
   function togglePlayback() {
     if (animationProgress >= 1) setAnimationProgress(0)
     setHintVisible(false)
+    if (!isPlaying && !mutedRef.current) startAudio()
     setIsPlaying((current) => !current)
+  }
+
+  function startAudio() {
+    if (audioRef.current?.state === 'closed') audioRef.current = null
+    if (!audioRef.current) {
+      try {
+        audioRef.current = new (window.AudioContext || window.webkitAudioContext)()
+      } catch {
+        mutedRef.current = true
+        setIsMuted(true)
+        return
+      }
+    }
+    audioRef.current.resume()
+  }
+
+  function toggleMute() {
+    mutedRef.current = !mutedRef.current
+    setIsMuted(mutedRef.current)
+    if (!mutedRef.current && isPlaying) startAudio()
   }
 
   function toggleCurves() {
@@ -858,6 +921,9 @@ export default function App() {
             <div className="playback-control">
               <button className="play-button" onClick={togglePlayback} aria-label={isPlaying ? 'Pausar animação' : 'Reproduzir trajetória'} title={isPlaying ? 'Pausar' : 'Reproduzir'}>
                 <span className={isPlaying ? 'pause-icon' : 'play-icon'} aria-hidden="true" />
+              </button>
+              <button className="mute-button" onClick={toggleMute} aria-label={isMuted ? 'Ativar som' : 'Silenciar som'} aria-pressed={isMuted} title={isMuted ? 'Ativar som' : 'Silenciar som'}>
+                <span className={isMuted ? 'sound-icon muted' : 'sound-icon'} aria-hidden="true" />
               </button>
               <select value={playbackSpeed} onChange={(event) => setPlaybackSpeed(Number(event.target.value))} aria-label="Velocidade da animação">
                 <option value={0.5}>0.5×</option>
