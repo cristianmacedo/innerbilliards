@@ -628,6 +628,8 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
   const [isMuted, setIsMuted] = useState(false)
+  const [statsOpen, setStatsOpen] = useState(false)
+  const [statistics, setStatistics] = useState(null)
   const [terminatedAtCorner, setTerminatedAtCorner] = useState(false)
 
   const renderTable = useCallback(() => {
@@ -636,6 +638,10 @@ export default function App() {
     setHits(result.hits)
     setMotionDuration(result.duration)
     impactProgressesRef.current = result.impactProgresses
+    setStatistics((current) => current?.initialSpeed === result.statistics?.initialSpeed
+      && current?.finalSpeed === result.statistics?.finalSpeed
+      && current?.averageCueForce === result.statistics?.averageCueForce
+      && current?.duration === result.statistics?.duration ? current : result.statistics)
     setTerminatedAtCorner(result.terminatedAtCorner)
   }, [shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress, geometryId])
 
@@ -930,6 +936,23 @@ export default function App() {
             </div>
             <div className="control-group"><span className="control-label">Reflexões</span><div className="stepper"><button onClick={() => setBounces((value) => Math.max(0, value - 1))} aria-label="Diminuir reflexões">−</button><output>{bounces}</output><button onClick={() => setBounces((value) => value + 1)} aria-label="Aumentar reflexões">+</button></div></div>
             <label className="switch-row"><span className="control-label">Rastro</span><input type="checkbox" checked={showTrace} onChange={(event) => setShowTrace(event.target.checked)} /><span className="switch" /></label>
+            <div className="stats-anchor">
+              <button className="stats-button" type="button" aria-expanded={statsOpen} aria-controls="trajectory-stats" onClick={() => setStatsOpen((open) => !open)}>Estatísticas</button>
+              {statsOpen && (
+                <section className="stats-panel" id="trajectory-stats" aria-label="Estatísticas da trajetória">
+                  <h2>Trajetória em números</h2>
+                  {statistics ? (
+                    <dl className="stats-grid">
+                      <div><dt>Saída</dt><dd>{formatStatistic(statistics.initialSpeed)} <small>m/s</small></dd></div>
+                      <div><dt>Último impacto</dt><dd>{formatStatistic(statistics.finalSpeed)} <small>m/s</small></dd></div>
+                      <div><dt>Força média do taco</dt><dd>{formatStatistic(statistics.averageCueForce, 0)} <small>N</small></dd></div>
+                      <div><dt>Tempo físico</dt><dd>{formatStatistic(statistics.duration)} <small>s</small></dd></div>
+                    </dl>
+                  ) : <p className="stats-empty">Posicione a bola dentro da mesa para calcular.</p>}
+                  <p className="stats-note">Estimativa 2D: largura do canvas = 2,54 m, bola = 170 g, contato do taco = 1 ms. Muitas reflexões podem exigir uma tacada inviável.</p>
+                </section>
+              )}
+            </div>
             <p className={`status${terminatedAtCorner ? ' corner-stop' : ''}`}>{terminatedAtCorner ? 'vértice' : `${hits} ${hits === 1 ? 'quique' : 'quiques'}`}</p>
           </>
         ) : (

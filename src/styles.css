@@ -72,6 +72,16 @@ button { color: inherit; }
 .tool-button { height: 2rem; padding: 0 .8rem; border: 2px solid var(--mist-dark); border-radius: 999px; background: var(--mist-mid); color: #10191d; cursor: pointer; font-size: .76rem; font-weight: 800; }
 .tool-button:hover, .tool-button:focus-visible { background: var(--mist-light); outline: none; }
 .tool-button:disabled { opacity: .4; cursor: default; }
+.stats-anchor { position: relative; }
+.stats-button { height: 2rem; padding: 0 .8rem; border: 2px solid var(--mist-dark); border-radius: 999px; background: #10191d; color: var(--mist-light); cursor: pointer; font-size: .76rem; font-weight: 800; }
+.stats-button:hover, .stats-button:focus-visible, .stats-button[aria-expanded="true"] { background: var(--mist-light); color: #10191d; outline: none; }
+.stats-panel { position: absolute; right: 0; bottom: calc(100% + .8rem); z-index: 5; width: min(18rem, calc(100vw - 2rem)); padding: .9rem; border: 1px solid var(--mist-dark); border-radius: 6px; background: #1b292d; box-shadow: 0 8px 24px #0006; color: var(--mist-light); }
+.stats-panel h2 { margin: 0 0 .8rem; font-size: .87rem; line-height: 1.2; }
+.stats-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin: 0; }
+.stats-grid dt { color: var(--mist-mid); font-size: .65rem; line-height: 1.2; }
+.stats-grid dd { margin: .2rem 0 0; font-size: 1rem; font-weight: 800; white-space: nowrap; }
+.stats-grid small { font-size: .68rem; font-weight: 700; }
+.stats-note, .stats-empty { margin: .85rem 0 0; color: var(--mist-mid); font-size: .66rem; line-height: 1.4; font-weight: 600; }
 .preset-picker { height: 2rem; display: inline-flex; overflow: hidden; border: 2px solid var(--mist-dark); border-radius: 999px; background: #10191d; }
 .preset-button { width: 2.6rem; border: 0; background: transparent; display: grid; place-items: center; cursor: pointer; }
 .preset-button + .preset-button { border-left: 2px solid var(--mist-dark); }
@@ -97,4 +107,5 @@ button { color: inherit; }
   .status { display: none; }
   .hint { font-size: .72rem; }
   .edit-help { flex-basis: 100%; text-align: center; }
+  .stats-panel { position: fixed; left: 1rem; right: 1rem; bottom: 8rem; width: auto; }
 }
