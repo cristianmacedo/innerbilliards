@@ -922,6 +922,7 @@ export default function App() {
                 <span className={isMuted ? 'sound-icon muted' : 'sound-icon'} aria-hidden="true" />
               </button>
               <select value={playbackSpeed} onChange={(event) => setPlaybackSpeed(Number(event.target.value))} aria-label="Velocidade da animação">
+                <option value={0.25}>0,25×</option>
                 <option value={0.5}>0.5×</option>
                 <option value={1}>1×</option>
                 <option value={2}>2×</option>
