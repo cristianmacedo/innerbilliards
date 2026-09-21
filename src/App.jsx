@@ -15,14 +15,40 @@ const hexagonShape = [
   { x: 0.18, y: 0.915 },
   { x: 0.055, y: 0.5 },
 ]
-const ellipseShape = Array.from({ length: 24 }, (_, index) => {
-  const angle = (index / 24) * Math.PI * 2
-  return { x: 0.5 + Math.cos(angle) * 0.445, y: 0.5 + Math.sin(angle) * 0.415 }
-})
+const ellipseShape = [
+  { x: 0.945, y: 0.5, in: { x: 0.945, y: 0.271 }, out: { x: 0.945, y: 0.729 } },
+  { x: 0.5, y: 0.915, in: { x: 0.746, y: 0.915 }, out: { x: 0.254, y: 0.915 } },
+  { x: 0.055, y: 0.5, in: { x: 0.055, y: 0.729 }, out: { x: 0.055, y: 0.271 } },
+  { x: 0.5, y: 0.085, in: { x: 0.254, y: 0.085 }, out: { x: 0.746, y: 0.085 } },
+]
+const triangleShape = [
+  { x: 0.5, y: 0.075 },
+  { x: 0.945, y: 0.915 },
+  { x: 0.055, y: 0.915 },
+]
+const octagonShape = [
+  { x: 0.18, y: 0.085 },
+  { x: 0.82, y: 0.085 },
+  { x: 0.945, y: 0.25 },
+  { x: 0.945, y: 0.75 },
+  { x: 0.82, y: 0.915 },
+  { x: 0.18, y: 0.915 },
+  { x: 0.055, y: 0.75 },
+  { x: 0.055, y: 0.25 },
+]
+const stadiumShape = [
+  { x: 0.2, y: 0.085, in: { x: 0.02, y: 0.085 } },
+  { x: 0.8, y: 0.085, out: { x: 0.98, y: 0.085 } },
+  { x: 0.8, y: 0.915, in: { x: 0.98, y: 0.915 } },
+  { x: 0.2, y: 0.915, out: { x: 0.02, y: 0.915 } },
+]
 const shapePresets = [
   { id: 'rectangle', label: 'Retângulo', shape: initialShape },
+  { id: 'triangle', label: 'Triângulo', shape: triangleShape },
   { id: 'hexagon', label: 'Hexágono', shape: hexagonShape },
+  { id: 'octagon', label: 'Octógono', shape: octagonShape },
   { id: 'ellipse', label: 'Elipse', shape: ellipseShape },
+  { id: 'stadium', label: 'Estádio', shape: stadiumShape },
 ]
 
 const cross = (a, b) => a.x * b.y - a.y * b.x
@@ -35,6 +61,52 @@ function normalizeVector(vector) {
 
 function polygonCenter(points) {
   return points.reduce((center, point) => ({ x: center.x + point.x / points.length, y: center.y + point.y / points.length }), { x: 0, y: 0 })
+}
+
+function cubicPoint(start, controlA, controlB, end, time) {
+  const inverse = 1 - time
+  return {
+    x: inverse ** 3 * start.x + 3 * inverse ** 2 * time * controlA.x + 3 * inverse * time ** 2 * controlB.x + time ** 3 * end.x,
+    y: inverse ** 3 * start.y + 3 * inverse ** 2 * time * controlA.y + 3 * inverse * time ** 2 * controlB.y + time ** 3 * end.y,
+  }
+}
+
+function sampleShape(shape, steps = 18) {
+  const sampled = []
+  shape.forEach((point, index) => {
+    const next = shape[(index + 1) % shape.length]
+    sampled.push({ x: point.x, y: point.y })
+    if (!point.out || !next.in) return
+    for (let step = 1; step < steps; step += 1) {
+      sampled.push(cubicPoint(point, point.out, next.in, next, step / steps))
+    }
+  })
+  return sampled
+}
+
+function smoothShape(shape) {
+  return shape.map((point, index) => {
+    const previous = shape[(index - 1 + shape.length) % shape.length]
+    const next = shape[(index + 1) % shape.length]
+    const tangent = normalizeVector({ x: next.x - previous.x, y: next.y - previous.y })
+    const handleLength = Math.min(
+      Math.hypot(point.x - previous.x, point.y - previous.y),
+      Math.hypot(next.x - point.x, next.y - point.y),
+    ) * 0.22
+    return {
+      ...point,
+      in: { x: point.x - tangent.x * handleLength, y: point.y - tangent.y * handleLength },
+      out: { x: point.x + tangent.x * handleLength, y: point.y + tangent.y * handleLength },
+    }
+  })
+}
+
+function cloneShape(shape) {
+  return shape.map((point) => ({
+    ...point,
+    in: point.in ? { ...point.in } : undefined,
+    out: point.out ? { ...point.out } : undefined,
+  }))
 }
 
 function insetPolygon(polygon, amount) {
@@ -176,6 +248,25 @@ function clearCue(cueCanvas) {
   cueCanvas.getContext('2d').clearRect(0, 0, cueCanvas.width, cueCanvas.height)
 }
 
+function pointAlongPath(path, progress) {
+  if (path.length < 2 || progress <= 0) return path[0]
+  const lengths = path.slice(1).map((point, index) => Math.hypot(point.x - path[index].x, point.y - path[index].y))
+  const totalLength = lengths.reduce((sum, length) => sum + length, 0)
+  let remaining = totalLength * Math.min(1, progress)
+
+  for (let index = 0; index < lengths.length; index += 1) {
+    if (remaining <= lengths[index]) {
+      const amount = lengths[index] ? remaining / lengths[index] : 0
+      return {
+        x: path[index].x + (path[index + 1].x - path[index].x) * amount,
+        y: path[index].y + (path[index + 1].y - path[index].y) * amount,
+      }
+    }
+    remaining -= lengths[index]
+  }
+  return path[path.length - 1]
+}
+
 function drawCue(cueCanvas, tableCanvas, ball, direction, radius, length) {
   const context = cueCanvas.getContext('2d')
   const cueRect = cueCanvas.getBoundingClientRect()
@@ -206,7 +297,7 @@ function drawCue(cueCanvas, tableCanvas, ball, direction, radius, length) {
   context.restore()
 }
 
-function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, selectedPoint) {
+function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress) {
   const context = canvas.getContext('2d')
   const rect = canvas.getBoundingClientRect()
   const dpr = window.devicePixelRatio || 1
@@ -215,7 +306,9 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
 
   const { width, height } = rect
-  const polygon = shape.map((point) => ({ x: point.x * width, y: point.y * height }))
+  const sampledShape = sampleShape(shape)
+  const polygon = sampledShape.map((point) => ({ x: point.x * width, y: point.y * height }))
+  const hasCurves = shape.some((point) => point.in || point.out)
   const center = polygonCenter(polygon)
   const ballRadius = Math.max(9, Math.min(width * 0.014, 16))
   const woodWidth = Math.max(10, Math.min(width * 0.014, 17))
@@ -228,6 +321,8 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   const direction = normalizeVector({ x: aim.x - ball.x, y: aim.y - ball.y })
   const distance = Math.hypot(aim.x - ball.x, aim.y - ball.y)
   const path = pointInPolygon(ball, collisionPolygon) ? getPath(ball, direction, bounces, collisionPolygon) : [ball]
+  const animatedBall = pointAlongPath(path, animationProgress)
+  const pathLength = path.slice(1).reduce((sum, point, index) => sum + Math.hypot(point.x - path[index].x, point.y - path[index].y), 0)
 
   context.clearRect(0, 0, width, height)
   context.save()
@@ -236,12 +331,14 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
 
   context.save()
   context.translate(7, 9)
-  drawRoundedPolygonPath(context, polygon, outerRadius)
+  if (hasCurves) drawPolygonPath(context, polygon)
+  else drawRoundedPolygonPath(context, polygon, outerRadius)
   context.fillStyle = '#1b0d09'
   context.fill()
   context.restore()
 
-  drawRoundedPolygonPath(context, polygon, outerRadius)
+  if (hasCurves) drawPolygonPath(context, polygon)
+  else drawRoundedPolygonPath(context, polygon, outerRadius)
   context.fillStyle = '#573729'
   context.fill()
 
@@ -285,20 +382,47 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
     context.restore()
   }
 
-  const gradient = context.createRadialGradient(ball.x - ballRadius * 0.3, ball.y - ballRadius * 0.38, ballRadius * 0.1, ball.x, ball.y, ballRadius)
+  const gradient = context.createRadialGradient(animatedBall.x - ballRadius * 0.3, animatedBall.y - ballRadius * 0.38, ballRadius * 0.1, animatedBall.x, animatedBall.y, ballRadius)
   gradient.addColorStop(0, '#ffffff')
   gradient.addColorStop(0.7, '#ebe9e2')
   gradient.addColorStop(1, '#c8c9c4')
   context.fillStyle = gradient
   context.beginPath()
-  context.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2)
+  context.arc(animatedBall.x, animatedBall.y, ballRadius, 0, Math.PI * 2)
   context.fill()
   context.strokeStyle = '#ffffff80'
   context.lineWidth = 1
   context.stroke()
 
   if (mode === 'edit') {
-    polygon.forEach((point, index) => {
+    const editablePoints = shape.map((point) => ({ x: point.x * width, y: point.y * height }))
+    const selected = selectedPoint === null ? null : shape[selectedPoint]
+    if (selected?.in || selected?.out) {
+      const selectedPosition = editablePoints[selectedPoint]
+      const handles = [
+        selected.in && { x: selected.in.x * width, y: selected.in.y * height },
+        selected.out && { x: selected.out.x * width, y: selected.out.y * height },
+      ].filter(Boolean)
+      context.save()
+      context.strokeStyle = '#dce7eaaa'
+      context.lineWidth = 1
+      handles.forEach((handle) => {
+        context.beginPath()
+        context.moveTo(selectedPosition.x, selectedPosition.y)
+        context.lineTo(handle.x, handle.y)
+        context.stroke()
+        context.beginPath()
+        context.arc(handle.x, handle.y, 4.5, 0, Math.PI * 2)
+        context.fillStyle = '#10191d'
+        context.fill()
+        context.strokeStyle = '#dce7ea'
+        context.lineWidth = 2
+        context.stroke()
+      })
+      context.restore()
+    }
+
+    editablePoints.forEach((point, index) => {
       context.beginPath()
       context.arc(point.x, point.y, index === selectedPoint ? 8 : 6, 0, Math.PI * 2)
       context.fillStyle = index === selectedPoint ? '#dce7ea' : '#a9bbc1'
@@ -309,11 +433,12 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
     })
     clearCue(cueCanvas)
   } else {
-    drawCue(cueCanvas, canvas, ball, direction, ballRadius, Math.max(170, Math.min(width * 0.4, 440)))
+    if (animationProgress === 0) drawCue(cueCanvas, canvas, ball, direction, ballRadius, Math.max(170, Math.min(width * 0.4, 440)))
+    else clearCue(cueCanvas)
   }
 
   context.restore()
-  return Math.max(0, path.length - 2)
+  return { hits: Math.max(0, path.length - 2), pathLength }
 }
 
 export default function App() {
@@ -328,17 +453,49 @@ export default function App() {
   const [showTrace, setShowTrace] = useState(true)
   const [hintVisible, setHintVisible] = useState(true)
   const [hits, setHits] = useState(3)
+  const [pathLength, setPathLength] = useState(0)
+  const [animationProgress, setAnimationProgress] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [playbackSpeed, setPlaybackSpeed] = useState(1)
 
   const renderTable = useCallback(() => {
     if (!canvasRef.current || !cueCanvasRef.current) return
-    setHits(drawTable(canvasRef.current, cueCanvasRef.current, shot, shape, bounces, showTrace, mode, selectedPoint))
-  }, [shot, shape, bounces, showTrace, mode, selectedPoint])
+    const result = drawTable(canvasRef.current, cueCanvasRef.current, shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress)
+    setHits(result.hits)
+    setPathLength(result.pathLength)
+  }, [shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress])
 
   useEffect(() => {
     renderTable()
     window.addEventListener('resize', renderTable)
     return () => window.removeEventListener('resize', renderTable)
   }, [renderTable])
+
+  useEffect(() => {
+    setIsPlaying(false)
+    setAnimationProgress(0)
+  }, [shot, shape, bounces, mode])
+
+  useEffect(() => {
+    if (!isPlaying || pathLength <= 0) return undefined
+    let frame
+    let startedAt
+    const startingProgress = animationProgress >= 1 ? 0 : animationProgress
+    const duration = (Math.max(1800, pathLength * 4.5) * (1 - startingProgress)) / playbackSpeed
+
+    function animate(time) {
+      if (!startedAt) startedAt = time
+      const linearProgress = Math.min(1, (time - startedAt) / duration)
+      const easedProgress = 1 - (1 - linearProgress) ** 2
+      const progress = startingProgress + (1 - startingProgress) * easedProgress
+      setAnimationProgress(progress)
+      if (linearProgress < 1) frame = requestAnimationFrame(animate)
+      else setIsPlaying(false)
+    }
+
+    frame = requestAnimationFrame(animate)
+    return () => cancelAnimationFrame(frame)
+  }, [isPlaying, playbackSpeed, pathLength])
 
   function normalizeEvent(event) {
     const rect = canvasRef.current.getBoundingClientRect()
@@ -357,7 +514,22 @@ export default function App() {
     const { normalized } = normalizeEvent(event)
     const safe = safePoint(normalized)
     if (dragRef.current?.type === 'vertex') {
-      setShape((current) => current.map((point, index) => index === dragRef.current.index ? safe : point))
+      setShape((current) => current.map((point, index) => {
+        if (index !== dragRef.current.index) return point
+        const movement = { x: safe.x - point.x, y: safe.y - point.y }
+        return {
+          ...point,
+          ...safe,
+          in: point.in ? { x: point.in.x + movement.x, y: point.in.y + movement.y } : undefined,
+          out: point.out ? { x: point.out.x + movement.x, y: point.out.y + movement.y } : undefined,
+        }
+      }))
+      return
+    }
+    if (dragRef.current?.type === 'handle') {
+      setShape((current) => current.map((point, index) => index === dragRef.current.index
+        ? { ...point, [dragRef.current.handle]: safe }
+        : point))
       return
     }
     setShot((current) => dragRef.current?.type === 'ball' ? { ...current, ball: safe } : { ...current, aim: safe })
@@ -370,6 +542,18 @@ export default function App() {
 
     if (mode === 'edit') {
       const pixelShape = shape.map((point) => ({ x: point.x * rect.width, y: point.y * rect.height }))
+      const selected = selectedPoint === null ? null : shape[selectedPoint]
+      if (selected?.in || selected?.out) {
+        const handles = [
+          selected.in && { name: 'in', point: { x: selected.in.x * rect.width, y: selected.in.y * rect.height } },
+          selected.out && { name: 'out', point: { x: selected.out.x * rect.width, y: selected.out.y * rect.height } },
+        ].filter(Boolean)
+        const handle = handles.find((candidate) => Math.hypot(candidate.point.x - pixels.x, candidate.point.y - pixels.y) < 18)
+        if (handle) {
+          dragRef.current = { type: 'handle', index: selectedPoint, handle: handle.name }
+          return
+        }
+      }
       let vertexIndex = -1
       let vertexDistance = 22
       pixelShape.forEach((point, index) => {
@@ -414,7 +598,8 @@ export default function App() {
 
   function finishPointer() {
     dragRef.current = null
-    if (!pointInPolygon(shot.ball, shape)) setShot((current) => ({ ...current, ball: polygonCenter(shape) }))
+    const boundary = sampleShape(shape)
+    if (!pointInPolygon(shot.ball, boundary)) setShot((current) => ({ ...current, ball: polygonCenter(boundary) }))
   }
 
   function resetAll() {
@@ -422,6 +607,8 @@ export default function App() {
     setShape(initialShape)
     setBounces(3)
     setSelectedPoint(null)
+    setIsPlaying(false)
+    setAnimationProgress(0)
   }
 
   function removeSelectedPoint() {
@@ -431,8 +618,24 @@ export default function App() {
   }
 
   function applyPreset(preset) {
-    setShape(preset.shape.map((point) => ({ ...point })))
-    setShot((current) => pointInPolygon(current.ball, preset.shape) ? current : { ...current, ball: polygonCenter(preset.shape) })
+    const nextShape = cloneShape(preset.shape)
+    const boundary = sampleShape(nextShape)
+    setShape(nextShape)
+    setShot((current) => pointInPolygon(current.ball, boundary) ? current : { ...current, ball: polygonCenter(boundary) })
+    setSelectedPoint(null)
+  }
+
+  function togglePlayback() {
+    if (animationProgress >= 1) setAnimationProgress(0)
+    setHintVisible(false)
+    setIsPlaying((current) => !current)
+  }
+
+  function toggleCurves() {
+    const curved = shape.some((point) => point.in || point.out)
+    setShape(curved
+      ? shape.map(({ x, y }) => ({ x, y }))
+      : smoothShape(shape))
     setSelectedPoint(null)
   }
 
@@ -467,6 +670,16 @@ export default function App() {
 
         {mode === 'play' ? (
           <>
+            <div className="playback-control">
+              <button className="play-button" onClick={togglePlayback} aria-label={isPlaying ? 'Pausar animação' : 'Reproduzir trajetória'} title={isPlaying ? 'Pausar' : 'Reproduzir'}>
+                <span className={isPlaying ? 'pause-icon' : 'play-icon'} aria-hidden="true" />
+              </button>
+              <select value={playbackSpeed} onChange={(event) => setPlaybackSpeed(Number(event.target.value))} aria-label="Velocidade da animação">
+                <option value={0.5}>0.5×</option>
+                <option value={1}>1×</option>
+                <option value={2}>2×</option>
+              </select>
+            </div>
             <div className="control-group"><span className="control-label">Reflexões</span><div className="stepper"><button onClick={() => setBounces((value) => Math.max(0, value - 1))} aria-label="Diminuir reflexões">−</button><output>{bounces}</output><button onClick={() => setBounces((value) => value + 1)} aria-label="Aumentar reflexões">+</button></div></div>
             <label className="switch-row"><span className="control-label">Rastro</span><input type="checkbox" checked={showTrace} onChange={(event) => setShowTrace(event.target.checked)} /><span className="switch" /></label>
             <p className="status">{hits} {hits === 1 ? 'quique' : 'quiques'}</p>
@@ -480,8 +693,9 @@ export default function App() {
                 </button>
               ))}
             </div>
+            <button className="tool-button" onClick={toggleCurves}>{shape.some((point) => point.in || point.out) ? 'Usar retas' : 'Suavizar'}</button>
             <button className="tool-button" onClick={removeSelectedPoint} disabled={selectedPoint === null || shape.length <= 3}>Remover ponto</button>
-            <p className="edit-help">Arraste os pontos · clique numa borda para adicionar</p>
+            <p className="edit-help">Arraste pontos e alças · clique numa borda para adicionar</p>
           </>
         )}
       </footer>
