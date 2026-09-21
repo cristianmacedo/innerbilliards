@@ -162,11 +162,17 @@ function nearestPointOnSegment(point, start, end) {
   return { point: nearest, distance: Math.hypot(point.x - nearest.x, point.y - nearest.y) }
 }
 
-function getPath(start, direction, bounces, polygon) {
+function getPath(start, direction, bounces, polygon, ballRadius) {
   const points = [start]
+  const impacts = []
   let point = { ...start }
   let vector = { ...direction }
   const epsilon = 0.05
+  const signedArea = polygon.reduce((area, vertex, index) => {
+    const next = polygon[(index + 1) % polygon.length]
+    return area + vertex.x * next.y - next.x * vertex.y
+  }, 0)
+  const inwardSide = signedArea >= 0 ? 1 : -1
 
   for (let bounce = 0; bounce <= bounces; bounce += 1) {
     let nearestHit = null
@@ -181,22 +187,28 @@ function getPath(start, direction, bounces, polygon) {
       const time = cross(offset, segment) / denominator
       const position = cross(offset, vector) / denominator
       if (time > epsilon && position >= -0.0001 && position <= 1.0001 && (!nearestHit || time < nearestHit.time)) {
-        nearestHit = { time, segment }
+        nearestHit = { time, segment, inwardNormal: normalizeVector({ x: -segment.y * inwardSide, y: segment.x * inwardSide }) }
       }
     })
 
     if (!nearestHit) break
     const hitPoint = { x: point.x + vector.x * nearestHit.time, y: point.y + vector.y * nearestHit.time }
     points.push(hitPoint)
+    impacts.push({
+      x: hitPoint.x - nearestHit.inwardNormal.x * ballRadius,
+      y: hitPoint.y - nearestHit.inwardNormal.y * ballRadius,
+    })
     if (bounce === bounces) break
 
-    const normal = normalizeVector({ x: -nearestHit.segment.y, y: nearestHit.segment.x })
-    const projection = dot(vector, normal)
-    vector = normalizeVector({ x: vector.x - 2 * projection * normal.x, y: vector.y - 2 * projection * normal.y })
+    const projection = dot(vector, nearestHit.inwardNormal)
+    vector = normalizeVector({
+      x: vector.x - 2 * projection * nearestHit.inwardNormal.x,
+      y: vector.y - 2 * projection * nearestHit.inwardNormal.y,
+    })
     point = { x: hitPoint.x + vector.x * epsilon * 2, y: hitPoint.y + vector.y * epsilon * 2 }
   }
 
-  return points
+  return { points, impacts }
 }
 
 function drawPolygonPath(context, polygon) {
@@ -315,12 +327,16 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   const railWidth = Math.max(7, Math.min(width * 0.009, 11))
   const outerRadius = Math.max(5, Math.min(width * 0.008, 10))
   const railPolygon = insetPolygon(polygon, woodWidth)
-  const collisionPolygon = insetPolygon(polygon, woodWidth + railWidth)
+  const feltPolygon = insetPolygon(polygon, woodWidth + railWidth)
+  const collisionPolygon = insetPolygon(polygon, woodWidth + railWidth + ballRadius)
   const ball = { x: shot.ball.x * width, y: shot.ball.y * height }
   const aim = { x: shot.aim.x * width, y: shot.aim.y * height }
   const direction = normalizeVector({ x: aim.x - ball.x, y: aim.y - ball.y })
   const distance = Math.hypot(aim.x - ball.x, aim.y - ball.y)
-  const path = pointInPolygon(ball, collisionPolygon) ? getPath(ball, direction, bounces, collisionPolygon) : [ball]
+  const trajectory = pointInPolygon(ball, collisionPolygon)
+    ? getPath(ball, direction, bounces, collisionPolygon, ballRadius)
+    : { points: [ball], impacts: [] }
+  const path = trajectory.points
   const animatedBall = pointAlongPath(path, animationProgress)
   const pathLength = path.slice(1).reduce((sum, point, index) => sum + Math.hypot(point.x - path[index].x, point.y - path[index].y), 0)
 
@@ -346,12 +362,12 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   context.fillStyle = '#218354'
   context.fill()
 
-  drawPolygonPath(context, collisionPolygon)
+  drawPolygonPath(context, feltPolygon)
   context.fillStyle = '#17643f'
   context.fill()
 
   context.save()
-  drawPolygonPath(context, collisionPolygon)
+  drawPolygonPath(context, feltPolygon)
   context.clip()
   const cornerShade = context.createRadialGradient(center.x, center.y, Math.min(width, height) * 0.2, center.x, center.y, Math.hypot(width, height) * 0.48)
   cornerShade.addColorStop(0.48, 'rgba(5, 24, 15, 0)')
@@ -370,7 +386,7 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
     path.slice(1).forEach((point) => context.lineTo(point.x, point.y))
     context.stroke()
     context.setLineDash([])
-    path.slice(1, -1).forEach((point) => {
+    trajectory.impacts.slice(0, -1).forEach((point) => {
       context.fillStyle = '#e2bd63'
       context.strokeStyle = '#583d29'
       context.lineWidth = 1
