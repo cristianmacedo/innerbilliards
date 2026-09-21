@@ -54,6 +54,15 @@ const shapePresets = [
 const cross = (a, b) => a.x * b.y - a.y * b.x
 const dot = (a, b) => a.x * b.x + a.y * b.y
 
+function canvasSpace(width, height) {
+  const shapeHeight = Math.min(height, width / 2)
+  return {
+    shapeHeight,
+    toPixels: (point) => ({ x: point.x * width, y: height / 2 + (point.y - 0.5) * shapeHeight }),
+    fromPixels: (point) => ({ x: point.x / width, y: 0.5 + (point.y - height / 2) / shapeHeight }),
+  }
+}
+
 function normalizeVector(vector) {
   const length = Math.hypot(vector.x, vector.y) || 1
   return { x: vector.x / length, y: vector.y / length }
@@ -433,8 +442,9 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
 
   const { width, height } = rect
+  const space = canvasSpace(width, height)
   const sampledShape = sampleShapeDetailed(shape)
-  const polygon = sampledShape.map((point) => ({ x: point.x * width, y: point.y * height }))
+  const polygon = sampledShape.map(space.toPixels)
   const hasCurves = shape.some((point) => point.in || point.out)
   const center = polygonCenter(polygon)
   const ballRadius = Math.max(9, Math.min(width * 0.014, 16))
@@ -444,8 +454,8 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   const railPolygon = insetPolygon(polygon, woodWidth)
   const feltPolygon = insetPolygon(polygon, woodWidth + railWidth)
   const collisionPolygon = insetPolygon(polygon, woodWidth + railWidth + ballRadius)
-  const ball = { x: shot.ball.x * width, y: shot.ball.y * height }
-  const aim = { x: shot.aim.x * width, y: shot.aim.y * height }
+  const ball = space.toPixels(shot.ball)
+  const aim = space.toPixels(shot.aim)
   const direction = normalizeVector({ x: aim.x - ball.x, y: aim.y - ball.y })
   const distance = Math.hypot(aim.x - ball.x, aim.y - ball.y)
   let trajectory = { points: [ball], impacts: [], terminatedAtCorner: false }
@@ -466,7 +476,7 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
       }
       trajectory = getEllipsePath(ball, direction, bounces, collisionEllipse, feltEllipse)
     } else {
-      trajectory = getPath(ball, direction, bounces, collisionPolygon, ballRadius, sampledShape, shape, { width, height })
+      trajectory = getPath(ball, direction, bounces, collisionPolygon, ballRadius, sampledShape, shape, { width, height: space.shapeHeight })
     }
   }
   const path = trajectory.points
@@ -572,13 +582,13 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   context.stroke()
 
   if (mode === 'edit') {
-    const editablePoints = shape.map((point) => ({ x: point.x * width, y: point.y * height }))
+    const editablePoints = shape.map(space.toPixels)
     const selected = selectedPoint === null ? null : shape[selectedPoint]
     if (selected?.in || selected?.out) {
       const selectedPosition = editablePoints[selectedPoint]
       const handles = [
-        selected.in && { x: selected.in.x * width, y: selected.in.y * height },
-        selected.out && { x: selected.out.x * width, y: selected.out.y * height },
+        selected.in && space.toPixels(selected.in),
+        selected.out && space.toPixels(selected.out),
       ].filter(Boolean)
       context.save()
       context.strokeStyle = '#dce7eaaa'
@@ -652,8 +662,13 @@ export default function App() {
 
   useEffect(() => {
     renderTable()
+    const observer = new ResizeObserver(renderTable)
+    observer.observe(canvasRef.current)
     window.addEventListener('resize', renderTable)
-    return () => window.removeEventListener('resize', renderTable)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', renderTable)
+    }
   }, [renderTable])
 
   useEffect(() => {
@@ -716,20 +731,24 @@ export default function App() {
 
   function normalizeEvent(event) {
     const rect = canvasRef.current.getBoundingClientRect()
+    const pixels = { x: event.clientX - rect.left, y: event.clientY - rect.top }
     return {
-      normalized: { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height },
-      pixels: { x: event.clientX - rect.left, y: event.clientY - rect.top },
+      normalized: canvasSpace(rect.width, rect.height).fromPixels(pixels),
+      pixels,
       rect,
     }
   }
 
-  function safePoint(point) {
-    return { x: Math.max(0.035, Math.min(0.965, point.x)), y: Math.max(0.055, Math.min(0.945, point.y)) }
+  function safePoint(point, rect) {
+    const space = canvasSpace(rect.width, rect.height)
+    const top = space.fromPixels({ x: 0, y: 16 }).y
+    const bottom = space.fromPixels({ x: 0, y: rect.height - 16 }).y
+    return { x: Math.max(0.035, Math.min(0.965, point.x)), y: Math.max(top, Math.min(bottom, point.y)) }
   }
 
   function updatePointer(event) {
-    const { normalized } = normalizeEvent(event)
-    const safe = safePoint(normalized)
+    const { normalized, rect } = normalizeEvent(event)
+    const safe = safePoint(normalized, rect)
     if (dragRef.current?.type === 'vertex') {
       setGeometryId('custom')
       setShape((current) => current.map((point, index) => {
@@ -755,17 +774,18 @@ export default function App() {
   }
 
   function onPointerDown(event) {
-    const { normalized, pixels, rect } = normalizeEvent(event)
+    const { pixels, rect } = normalizeEvent(event)
     canvasRef.current.setPointerCapture(event.pointerId)
     setHintVisible(false)
 
     if (mode === 'edit') {
-      const pixelShape = shape.map((point) => ({ x: point.x * rect.width, y: point.y * rect.height }))
+      const space = canvasSpace(rect.width, rect.height)
+      const pixelShape = shape.map(space.toPixels)
       const selected = selectedPoint === null ? null : shape[selectedPoint]
       if (selected?.in || selected?.out) {
         const handles = [
-          selected.in && { name: 'in', point: { x: selected.in.x * rect.width, y: selected.in.y * rect.height } },
-          selected.out && { name: 'out', point: { x: selected.out.x * rect.width, y: selected.out.y * rect.height } },
+          selected.in && { name: 'in', point: space.toPixels(selected.in) },
+          selected.out && { name: 'out', point: space.toPixels(selected.out) },
         ].filter(Boolean)
         const handle = handles.find((candidate) => Math.hypot(candidate.point.x - pixels.x, candidate.point.y - pixels.y) < 18)
         if (handle) {
@@ -797,7 +817,7 @@ export default function App() {
       })
 
       if (nearestEdge) {
-        const inserted = safePoint({ x: nearestEdge.point.x / rect.width, y: nearestEdge.point.y / rect.height })
+        const inserted = safePoint(space.fromPixels(nearestEdge.point), rect)
         const newIndex = nearestEdge.index + 1
         setGeometryId('custom')
         setShape((current) => [...current.slice(0, newIndex), inserted, ...current.slice(newIndex)])
@@ -809,10 +829,8 @@ export default function App() {
       return
     }
 
-    const dx = normalized.x - shot.ball.x
-    const dy = normalized.y - shot.ball.y
-    const threshold = Math.max(18 / rect.width, 18 / rect.height)
-    dragRef.current = { type: Math.hypot(dx, dy) < threshold ? 'ball' : 'aim' }
+    const ball = canvasSpace(rect.width, rect.height).toPixels(shot.ball)
+    dragRef.current = { type: Math.hypot(pixels.x - ball.x, pixels.y - ball.y) < 18 ? 'ball' : 'aim' }
     updatePointer(event)
   }
 

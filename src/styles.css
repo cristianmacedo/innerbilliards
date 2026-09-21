@@ -16,7 +16,7 @@ body { margin: 0; min-width: 320px; min-height: 100svh; overflow-x: hidden; back
 button, input { font: inherit; }
 button { color: inherit; }
 
-.app-shell { min-height: 100svh; display: grid; grid-template-rows: auto 1fr auto; padding: 1.5rem clamp(1rem, 3.2vw, 3rem); gap: 1.35rem; background: #10191d; }
+.app-shell { min-height: 100svh; height: 100svh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; padding: 1.5rem clamp(1rem, 3.2vw, 3rem); gap: 1.35rem; overflow: clip; background: #10191d; }
 .topbar, .controls { width: min(100%, 1180px); margin: 0 auto; display: flex; align-items: center; }
 .topbar { justify-content: space-between; }
 .wordmark { appearance: none; padding: 0; border: 0; background: transparent; color: var(--mist-mid); display: inline-flex; align-items: center; gap: .55rem; text-decoration: none; font-family: ui-rounded, "Arial Rounded MT Bold", sans-serif; font-size: clamp(1.35rem, 2.4vw, 1.75rem); letter-spacing: 0; font-weight: 900; line-height: 1; transform: rotate(-2deg); cursor: pointer; }
@@ -30,8 +30,8 @@ button { color: inherit; }
 .reset-button { border: 2px solid var(--mist-dark); border-radius: 999px; background: var(--mist-mid); color: #10191d; padding: .42rem .85rem; cursor: pointer; font-size: .8rem; font-weight: 800; box-shadow: 2px 2px 0 var(--mist-dark); }
 .reset-button:hover, .reset-button:focus-visible { background: var(--mist-light); color: #10191d; outline: none; transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--mist-dark); }
 
-.playground { min-height: 0; display: grid; place-items: center; }
-.table-wrap { position: relative; width: min(100%, 1180px); aspect-ratio: 2 / 1; max-height: calc(100svh - 12rem); overflow: visible; }
+.playground { min-height: 0; min-width: 0; display: grid; place-items: stretch; }
+.table-wrap { position: relative; width: 100%; height: 100%; min-height: 0; overflow: visible; }
 .table-wrap > canvas:first-child { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
 .table-wrap > canvas.editing { cursor: grab; }
 .table-wrap > canvas.editing:active { cursor: grabbing; }
@@ -90,9 +90,8 @@ button { color: inherit; }
 .edit-help { margin: 0; color: var(--mist-mid); font-size: .76rem; font-weight: 700; }
 
 @media (max-width: 600px) {
-  .app-shell { padding: 1rem; gap: 1.25rem; }
+  .app-shell { height: 100svh; padding: 1rem; gap: 1.25rem; }
   .mode-label { display: none; }
-  .table-wrap { max-height: none; }
   .controls { justify-content: center; flex-wrap: wrap; gap: .75rem; }
   .control-group, .switch-row { gap: .55rem; }
   .status { display: none; }
