@@ -386,7 +386,20 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
     path.slice(1).forEach((point) => context.lineTo(point.x, point.y))
     context.stroke()
     context.setLineDash([])
-    trajectory.impacts.slice(0, -1).forEach((point) => {
+    trajectory.impacts.slice(0, -1).forEach((point, index) => {
+      const ballCenter = path[index + 1]
+      context.strokeStyle = '#dce7ea70'
+      context.lineWidth = 1
+      context.beginPath()
+      context.arc(ballCenter.x, ballCenter.y, ballRadius, 0, Math.PI * 2)
+      context.stroke()
+
+      context.strokeStyle = '#e2bd6370'
+      context.beginPath()
+      context.moveTo(ballCenter.x, ballCenter.y)
+      context.lineTo(point.x, point.y)
+      context.stroke()
+
       context.fillStyle = '#e2bd63'
       context.strokeStyle = '#583d29'
       context.lineWidth = 1
