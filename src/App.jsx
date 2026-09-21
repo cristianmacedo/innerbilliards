@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { bounceVelocity, buildMotion, motionStatistics, pointAlongMotion } from './motion'
 
 const initialShot = { ball: { x: 0.31, y: 0.62 }, aim: { x: 0.76, y: 0.36 } }
 const initialShape = [
@@ -214,6 +215,7 @@ function nearestPointOnSegment(point, start, end) {
 function getPath(start, direction, bounces, polygon, ballRadius, metadata, shape, size) {
   const points = [start]
   const impacts = []
+  const bounceRatios = []
   let terminatedAtCorner = false
   let point = { ...start }
   let vector = { ...direction }
@@ -278,15 +280,13 @@ function getPath(start, direction, bounces, polygon, ballRadius, metadata, shape
     })
     if (bounce === bounces) break
 
-    const projection = dot(vector, nearestHit.inwardNormal)
-    vector = normalizeVector({
-      x: vector.x - 2 * projection * nearestHit.inwardNormal.x,
-      y: vector.y - 2 * projection * nearestHit.inwardNormal.y,
-    })
+    const collision = bounceVelocity(vector, nearestHit.inwardNormal)
+    vector = collision.direction
+    bounceRatios.push(collision.retainedSpeed)
     point = { x: hitPoint.x + vector.x * epsilon * 2, y: hitPoint.y + vector.y * epsilon * 2 }
   }
 
-  return { points, impacts, terminatedAtCorner }
+  return { points, impacts, bounceRatios, terminatedAtCorner }
 }
 
 function rayEllipseHit(point, vector, ellipse) {
@@ -309,6 +309,7 @@ function rayEllipseHit(point, vector, ellipse) {
 function getEllipsePath(start, direction, bounces, collisionEllipse, feltEllipse) {
   const points = [start]
   const impacts = []
+  const bounceRatios = []
   let point = { ...start }
   let vector = { ...direction }
 
@@ -324,15 +325,13 @@ function getEllipsePath(start, direction, bounces, collisionEllipse, feltEllipse
     impacts.push(contact)
     if (bounce === bounces) break
 
-    const projection = dot(vector, outwardNormal)
-    vector = normalizeVector({
-      x: vector.x - 2 * projection * outwardNormal.x,
-      y: vector.y - 2 * projection * outwardNormal.y,
-    })
+    const collision = bounceVelocity(vector, outwardNormal)
+    vector = collision.direction
+    bounceRatios.push(collision.retainedSpeed)
     point = { x: hit.point.x + vector.x * 0.1, y: hit.point.y + vector.y * 0.1 }
   }
 
-  return { points, impacts, terminatedAtCorner: false }
+  return { points, impacts, bounceRatios, terminatedAtCorner: false }
 }
 
 function drawPolygonPath(context, polygon) {
@@ -382,25 +381,6 @@ function drawTaperedSection(context, start, end, direction, startWidth, endWidth
 
 function clearCue(cueCanvas) {
   cueCanvas.getContext('2d').clearRect(0, 0, cueCanvas.width, cueCanvas.height)
-}
-
-function pointAlongPath(path, progress) {
-  if (path.length < 2 || progress <= 0) return path[0]
-  const lengths = path.slice(1).map((point, index) => Math.hypot(point.x - path[index].x, point.y - path[index].y))
-  const totalLength = lengths.reduce((sum, length) => sum + length, 0)
-  let remaining = totalLength * Math.min(1, progress)
-
-  for (let index = 0; index < lengths.length; index += 1) {
-    if (remaining <= lengths[index]) {
-      const amount = lengths[index] ? remaining / lengths[index] : 0
-      return {
-        x: path[index].x + (path[index + 1].x - path[index].x) * amount,
-        y: path[index].y + (path[index + 1].y - path[index].y) * amount,
-      }
-    }
-    remaining -= lengths[index]
-  }
-  return path[path.length - 1]
 }
 
 function drawCue(cueCanvas, tableCanvas, ball, direction, radius, length) {
@@ -458,7 +438,7 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   const aim = space.toPixels(shot.aim)
   const direction = normalizeVector({ x: aim.x - ball.x, y: aim.y - ball.y })
   const distance = Math.hypot(aim.x - ball.x, aim.y - ball.y)
-  let trajectory = { points: [ball], impacts: [], terminatedAtCorner: false }
+  let trajectory = { points: [ball], impacts: [], bounceRatios: [], terminatedAtCorner: false }
   if (pointInPolygon(ball, collisionPolygon)) {
     if (geometryId === 'ellipse') {
       const outerRadiusX = (Math.max(...polygon.map((point) => point.x)) - Math.min(...polygon.map((point) => point.x))) / 2
@@ -480,13 +460,8 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
     }
   }
   const path = trajectory.points
-  const animatedBall = pointAlongPath(path, animationProgress)
-  const pathLength = path.slice(1).reduce((sum, point, index) => sum + Math.hypot(point.x - path[index].x, point.y - path[index].y), 0)
-  let traveled = 0
-  const impactProgresses = path.slice(1).map((point, index) => {
-    traveled += Math.hypot(point.x - path[index].x, point.y - path[index].y)
-    return pathLength > 0 ? traveled / pathLength : 0
-  })
+  const motion = buildMotion(path, trajectory.bounceRatios, width)
+  const animatedBall = pointAlongMotion(motion, animationProgress) || ball
 
   context.clearRect(0, 0, width, height)
   context.save()
@@ -625,7 +600,11 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   }
 
   context.restore()
-  return { hits: Math.max(0, path.length - 2), pathLength, impactProgresses, terminatedAtCorner: trajectory.terminatedAtCorner }
+  return { hits: Math.max(0, path.length - 2), duration: motion.duration, impactProgresses: motion.impactProgresses, statistics: motionStatistics(motion, width), terminatedAtCorner: trajectory.terminatedAtCorner }
+}
+
+function formatStatistic(value, digits = 2) {
+  return Number.isFinite(value) ? value.toLocaleString('pt-BR', { maximumFractionDigits: digits, notation: 'compact' }) : '—'
 }
 
 export default function App() {
@@ -644,7 +623,7 @@ export default function App() {
   const [showTrace, setShowTrace] = useState(true)
   const [hintVisible, setHintVisible] = useState(true)
   const [hits, setHits] = useState(3)
-  const [pathLength, setPathLength] = useState(0)
+  const [motionDuration, setMotionDuration] = useState(0)
   const [animationProgress, setAnimationProgress] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
@@ -655,7 +634,7 @@ export default function App() {
     if (!canvasRef.current || !cueCanvasRef.current) return
     const result = drawTable(canvasRef.current, cueCanvasRef.current, shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress, geometryId)
     setHits(result.hits)
-    setPathLength(result.pathLength)
+    setMotionDuration(result.duration)
     impactProgressesRef.current = result.impactProgresses
     setTerminatedAtCorner(result.terminatedAtCorner)
   }, [shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress, geometryId])
@@ -703,19 +682,18 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!isPlaying || pathLength <= 0) return undefined
+    if (!isPlaying || motionDuration <= 0) return undefined
     let frame
     let startedAt
     const startingProgress = animationProgress >= 1 ? 0 : animationProgress
-    const duration = (Math.max(1800, pathLength * 4.5) * (1 - startingProgress)) / playbackSpeed
+    const duration = (Math.max(1200, motionDuration * 1000) * (1 - startingProgress)) / playbackSpeed
     const impacts = impactProgressesRef.current.filter((progress) => progress > startingProgress + 0.0001)
     let nextImpact = 0
 
     function animate(time) {
       if (!startedAt) startedAt = time
       const linearProgress = Math.min(1, (time - startedAt) / duration)
-      const easedProgress = 1 - (1 - linearProgress) ** 2
-      const progress = startingProgress + (1 - startingProgress) * easedProgress
+      const progress = startingProgress + (1 - startingProgress) * linearProgress
       while (nextImpact < impacts.length && progress >= impacts[nextImpact]) {
         playImpact()
         nextImpact += 1
@@ -727,7 +705,7 @@ export default function App() {
 
     frame = requestAnimationFrame(animate)
     return () => cancelAnimationFrame(frame)
-  }, [isPlaying, playbackSpeed, pathLength])
+  }, [isPlaying, playbackSpeed, motionDuration])
 
   function normalizeEvent(event) {
     const rect = canvasRef.current.getBoundingClientRect()
