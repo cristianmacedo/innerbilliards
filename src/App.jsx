@@ -71,17 +71,57 @@ function cubicPoint(start, controlA, controlB, end, time) {
   }
 }
 
-function sampleShape(shape, steps = 18) {
+function cubicDerivative(start, controlA, controlB, end, time) {
+  const inverse = 1 - time
+  return {
+    x: 3 * inverse ** 2 * (controlA.x - start.x) + 6 * inverse * time * (controlB.x - controlA.x) + 3 * time ** 2 * (end.x - controlB.x),
+    y: 3 * inverse ** 2 * (controlA.y - start.y) + 6 * inverse * time * (controlB.y - controlA.y) + 3 * time ** 2 * (end.y - controlB.y),
+  }
+}
+
+function isSmoothNode(shape, index) {
+  const point = shape[index]
+  const previous = shape[(index - 1 + shape.length) % shape.length]
+  const next = shape[(index + 1) % shape.length]
+  const incoming = point.in
+    ? { x: point.x - point.in.x, y: point.y - point.in.y }
+    : { x: point.x - previous.x, y: point.y - previous.y }
+  const outgoing = point.out
+    ? { x: point.out.x - point.x, y: point.out.y - point.y }
+    : { x: next.x - point.x, y: next.y - point.y }
+  const a = normalizeVector(incoming)
+  const b = normalizeVector(outgoing)
+  return Math.abs(cross(a, b)) < 0.025 && dot(a, b) > 0.99
+}
+
+function sampleShapeDetailed(shape, steps = 48) {
   const sampled = []
   shape.forEach((point, index) => {
     const next = shape[(index + 1) % shape.length]
-    sampled.push({ x: point.x, y: point.y })
+    sampled.push({
+      x: point.x,
+      y: point.y,
+      nodeIndex: index,
+      isNode: true,
+      smooth: isSmoothNode(shape, index),
+      curveIndex: point.out && next.in ? index : null,
+      time: 0,
+    })
     if (!point.out || !next.in) return
     for (let step = 1; step < steps; step += 1) {
-      sampled.push(cubicPoint(point, point.out, next.in, next, step / steps))
+      sampled.push({
+        ...cubicPoint(point, point.out, next.in, next, step / steps),
+        isNode: false,
+        curveIndex: index,
+        time: step / steps,
+      })
     }
   })
   return sampled
+}
+
+function sampleShape(shape, steps) {
+  return sampleShapeDetailed(shape, steps).map(({ x, y }) => ({ x, y }))
 }
 
 function smoothShape(shape) {
@@ -162,9 +202,10 @@ function nearestPointOnSegment(point, start, end) {
   return { point: nearest, distance: Math.hypot(point.x - nearest.x, point.y - nearest.y) }
 }
 
-function getPath(start, direction, bounces, polygon, ballRadius) {
+function getPath(start, direction, bounces, polygon, ballRadius, metadata, shape, size) {
   const points = [start]
   const impacts = []
+  let terminatedAtCorner = false
   let point = { ...start }
   let vector = { ...direction }
   const epsilon = 0.05
@@ -175,7 +216,7 @@ function getPath(start, direction, bounces, polygon, ballRadius) {
   const inwardSide = signedArea >= 0 ? 1 : -1
 
   for (let bounce = 0; bounce <= bounces; bounce += 1) {
-    let nearestHit = null
+    const candidates = []
 
     polygon.forEach((edgeStart, index) => {
       const edgeEnd = polygon[(index + 1) % polygon.length]
@@ -186,14 +227,42 @@ function getPath(start, direction, bounces, polygon, ballRadius) {
       const offset = { x: edgeStart.x - point.x, y: edgeStart.y - point.y }
       const time = cross(offset, segment) / denominator
       const position = cross(offset, vector) / denominator
-      if (time > epsilon && position >= -0.0001 && position <= 1.0001 && (!nearestHit || time < nearestHit.time)) {
-        nearestHit = { time, segment, inwardNormal: normalizeVector({ x: -segment.y * inwardSide, y: segment.x * inwardSide }) }
+      if (time > epsilon && position >= -0.0001 && position <= 1.0001) {
+        const startMeta = metadata?.[index]
+        const endMeta = metadata?.[(index + 1) % metadata.length]
+        let inwardNormal = normalizeVector({ x: -segment.y * inwardSide, y: segment.x * inwardSide })
+
+        if (startMeta?.curveIndex !== null && startMeta?.curveIndex !== undefined) {
+          const curveStart = shape[startMeta.curveIndex]
+          const curveEnd = shape[(startMeta.curveIndex + 1) % shape.length]
+          const endTime = endMeta?.curveIndex === startMeta.curveIndex ? endMeta.time : 1
+          const curveTime = startMeta.time + (endTime - startMeta.time) * Math.max(0, Math.min(1, position))
+          const tangent = cubicDerivative(curveStart, curveStart.out, curveEnd.in, curveEnd, curveTime)
+          const pixelTangent = { x: tangent.x * size.width, y: tangent.y * size.height }
+          inwardNormal = normalizeVector({ x: -pixelTangent.y * inwardSide, y: pixelTangent.x * inwardSide })
+        }
+
+        const cornerTolerance = 2 / Math.max(1, Math.hypot(segment.x, segment.y))
+        const hitsCorner = (
+          position <= cornerTolerance && startMeta?.isNode && !startMeta.smooth
+        ) || (
+          position >= 1 - cornerTolerance && endMeta?.isNode && !endMeta.smooth
+        )
+        candidates.push({ time, segment, inwardNormal, hitsCorner })
       }
     })
 
+    candidates.sort((a, b) => a.time - b.time)
+    const nearestHit = candidates[0]
     if (!nearestHit) break
+    nearestHit.hitsCorner = candidates.some((candidate) => candidate.time - nearestHit.time < 2 && candidate.hitsCorner)
     const hitPoint = { x: point.x + vector.x * nearestHit.time, y: point.y + vector.y * nearestHit.time }
     points.push(hitPoint)
+    if (nearestHit.hitsCorner) {
+      impacts.push({ ...hitPoint, corner: true })
+      terminatedAtCorner = true
+      break
+    }
     impacts.push({
       x: hitPoint.x - nearestHit.inwardNormal.x * ballRadius,
       y: hitPoint.y - nearestHit.inwardNormal.y * ballRadius,
@@ -208,7 +277,53 @@ function getPath(start, direction, bounces, polygon, ballRadius) {
     point = { x: hitPoint.x + vector.x * epsilon * 2, y: hitPoint.y + vector.y * epsilon * 2 }
   }
 
-  return { points, impacts }
+  return { points, impacts, terminatedAtCorner }
+}
+
+function rayEllipseHit(point, vector, ellipse) {
+  const offsetX = point.x - ellipse.x
+  const offsetY = point.y - ellipse.y
+  const radiusXSquared = ellipse.radiusX ** 2
+  const radiusYSquared = ellipse.radiusY ** 2
+  const a = vector.x ** 2 / radiusXSquared + vector.y ** 2 / radiusYSquared
+  const b = 2 * (offsetX * vector.x / radiusXSquared + offsetY * vector.y / radiusYSquared)
+  const c = offsetX ** 2 / radiusXSquared + offsetY ** 2 / radiusYSquared - 1
+  const discriminant = b ** 2 - 4 * a * c
+  if (discriminant < 0) return null
+  const root = Math.sqrt(discriminant)
+  const times = [(-b - root) / (2 * a), (-b + root) / (2 * a)].filter((time) => time > 0.05)
+  if (!times.length) return null
+  const time = Math.min(...times)
+  return { time, point: { x: point.x + vector.x * time, y: point.y + vector.y * time } }
+}
+
+function getEllipsePath(start, direction, bounces, collisionEllipse, feltEllipse) {
+  const points = [start]
+  const impacts = []
+  let point = { ...start }
+  let vector = { ...direction }
+
+  for (let bounce = 0; bounce <= bounces; bounce += 1) {
+    const hit = rayEllipseHit(point, vector, collisionEllipse)
+    if (!hit) break
+    const outwardNormal = normalizeVector({
+      x: (hit.point.x - collisionEllipse.x) / collisionEllipse.radiusX ** 2,
+      y: (hit.point.y - collisionEllipse.y) / collisionEllipse.radiusY ** 2,
+    })
+    const contact = rayEllipseHit(hit.point, outwardNormal, feltEllipse)?.point || hit.point
+    points.push(hit.point)
+    impacts.push(contact)
+    if (bounce === bounces) break
+
+    const projection = dot(vector, outwardNormal)
+    vector = normalizeVector({
+      x: vector.x - 2 * projection * outwardNormal.x,
+      y: vector.y - 2 * projection * outwardNormal.y,
+    })
+    point = { x: hit.point.x + vector.x * 0.1, y: hit.point.y + vector.y * 0.1 }
+  }
+
+  return { points, impacts, terminatedAtCorner: false }
 }
 
 function drawPolygonPath(context, polygon) {
@@ -309,7 +424,7 @@ function drawCue(cueCanvas, tableCanvas, ball, direction, radius, length) {
   context.restore()
 }
 
-function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress) {
+function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress, geometryId) {
   const context = canvas.getContext('2d')
   const rect = canvas.getBoundingClientRect()
   const dpr = window.devicePixelRatio || 1
@@ -318,7 +433,7 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
 
   const { width, height } = rect
-  const sampledShape = sampleShape(shape)
+  const sampledShape = sampleShapeDetailed(shape)
   const polygon = sampledShape.map((point) => ({ x: point.x * width, y: point.y * height }))
   const hasCurves = shape.some((point) => point.in || point.out)
   const center = polygonCenter(polygon)
@@ -333,9 +448,27 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   const aim = { x: shot.aim.x * width, y: shot.aim.y * height }
   const direction = normalizeVector({ x: aim.x - ball.x, y: aim.y - ball.y })
   const distance = Math.hypot(aim.x - ball.x, aim.y - ball.y)
-  const trajectory = pointInPolygon(ball, collisionPolygon)
-    ? getPath(ball, direction, bounces, collisionPolygon, ballRadius)
-    : { points: [ball], impacts: [] }
+  let trajectory = { points: [ball], impacts: [], terminatedAtCorner: false }
+  if (pointInPolygon(ball, collisionPolygon)) {
+    if (geometryId === 'ellipse') {
+      const outerRadiusX = (Math.max(...polygon.map((point) => point.x)) - Math.min(...polygon.map((point) => point.x))) / 2
+      const outerRadiusY = (Math.max(...polygon.map((point) => point.y)) - Math.min(...polygon.map((point) => point.y))) / 2
+      const feltEllipse = {
+        x: center.x,
+        y: center.y,
+        radiusX: outerRadiusX - woodWidth - railWidth,
+        radiusY: outerRadiusY - woodWidth - railWidth,
+      }
+      const collisionEllipse = {
+        ...feltEllipse,
+        radiusX: feltEllipse.radiusX - ballRadius,
+        radiusY: feltEllipse.radiusY - ballRadius,
+      }
+      trajectory = getEllipsePath(ball, direction, bounces, collisionEllipse, feltEllipse)
+    } else {
+      trajectory = getPath(ball, direction, bounces, collisionPolygon, ballRadius, sampledShape, shape, { width, height })
+    }
+  }
   const path = trajectory.points
   const animatedBall = pointAlongPath(path, animationProgress)
   const pathLength = path.slice(1).reduce((sum, point, index) => sum + Math.hypot(point.x - path[index].x, point.y - path[index].y), 0)
@@ -408,6 +541,16 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
       context.fill()
       context.stroke()
     })
+    if (trajectory.terminatedAtCorner) {
+      const corner = trajectory.impacts[trajectory.impacts.length - 1]
+      context.fillStyle = '#d64045'
+      context.strokeStyle = '#10191d'
+      context.lineWidth = 1.5
+      context.beginPath()
+      context.arc(corner.x, corner.y, 4.5, 0, Math.PI * 2)
+      context.fill()
+      context.stroke()
+    }
     context.restore()
   }
 
@@ -467,7 +610,7 @@ function drawTable(canvas, cueCanvas, shot, shape, bounces, showTrace, mode, sel
   }
 
   context.restore()
-  return { hits: Math.max(0, path.length - 2), pathLength }
+  return { hits: Math.max(0, path.length - 2), pathLength, terminatedAtCorner: trajectory.terminatedAtCorner }
 }
 
 export default function App() {
@@ -476,6 +619,7 @@ export default function App() {
   const dragRef = useRef(null)
   const [shot, setShot] = useState(initialShot)
   const [shape, setShape] = useState(initialShape)
+  const [geometryId, setGeometryId] = useState('rectangle')
   const [mode, setMode] = useState('play')
   const [selectedPoint, setSelectedPoint] = useState(null)
   const [bounces, setBounces] = useState(3)
@@ -486,13 +630,15 @@ export default function App() {
   const [animationProgress, setAnimationProgress] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
+  const [terminatedAtCorner, setTerminatedAtCorner] = useState(false)
 
   const renderTable = useCallback(() => {
     if (!canvasRef.current || !cueCanvasRef.current) return
-    const result = drawTable(canvasRef.current, cueCanvasRef.current, shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress)
+    const result = drawTable(canvasRef.current, cueCanvasRef.current, shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress, geometryId)
     setHits(result.hits)
     setPathLength(result.pathLength)
-  }, [shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress])
+    setTerminatedAtCorner(result.terminatedAtCorner)
+  }, [shot, shape, bounces, showTrace, mode, selectedPoint, animationProgress, geometryId])
 
   useEffect(() => {
     renderTable()
@@ -543,6 +689,7 @@ export default function App() {
     const { normalized } = normalizeEvent(event)
     const safe = safePoint(normalized)
     if (dragRef.current?.type === 'vertex') {
+      setGeometryId('custom')
       setShape((current) => current.map((point, index) => {
         if (index !== dragRef.current.index) return point
         const movement = { x: safe.x - point.x, y: safe.y - point.y }
@@ -556,6 +703,7 @@ export default function App() {
       return
     }
     if (dragRef.current?.type === 'handle') {
+      setGeometryId('custom')
       setShape((current) => current.map((point, index) => index === dragRef.current.index
         ? { ...point, [dragRef.current.handle]: safe }
         : point))
@@ -609,6 +757,7 @@ export default function App() {
       if (nearestEdge) {
         const inserted = safePoint({ x: nearestEdge.point.x / rect.width, y: nearestEdge.point.y / rect.height })
         const newIndex = nearestEdge.index + 1
+        setGeometryId('custom')
         setShape((current) => [...current.slice(0, newIndex), inserted, ...current.slice(newIndex)])
         setSelectedPoint(newIndex)
         dragRef.current = { type: 'vertex', index: newIndex }
@@ -634,6 +783,7 @@ export default function App() {
   function resetAll() {
     setShot(initialShot)
     setShape(initialShape)
+    setGeometryId('rectangle')
     setBounces(3)
     setSelectedPoint(null)
     setIsPlaying(false)
@@ -642,6 +792,7 @@ export default function App() {
 
   function removeSelectedPoint() {
     if (selectedPoint === null || shape.length <= 3) return
+    setGeometryId('custom')
     setShape((current) => current.filter((_, index) => index !== selectedPoint))
     setSelectedPoint(null)
   }
@@ -650,6 +801,7 @@ export default function App() {
     const nextShape = cloneShape(preset.shape)
     const boundary = sampleShape(nextShape)
     setShape(nextShape)
+    setGeometryId(preset.id)
     setShot((current) => pointInPolygon(current.ball, boundary) ? current : { ...current, ball: polygonCenter(boundary) })
     setSelectedPoint(null)
   }
@@ -662,6 +814,7 @@ export default function App() {
 
   function toggleCurves() {
     const curved = shape.some((point) => point.in || point.out)
+    setGeometryId('custom')
     setShape(curved
       ? shape.map(({ x, y }) => ({ x, y }))
       : smoothShape(shape))
@@ -714,7 +867,7 @@ export default function App() {
             </div>
             <div className="control-group"><span className="control-label">Reflexões</span><div className="stepper"><button onClick={() => setBounces((value) => Math.max(0, value - 1))} aria-label="Diminuir reflexões">−</button><output>{bounces}</output><button onClick={() => setBounces((value) => value + 1)} aria-label="Aumentar reflexões">+</button></div></div>
             <label className="switch-row"><span className="control-label">Rastro</span><input type="checkbox" checked={showTrace} onChange={(event) => setShowTrace(event.target.checked)} /><span className="switch" /></label>
-            <p className="status">{hits} {hits === 1 ? 'quique' : 'quiques'}</p>
+            <p className={`status${terminatedAtCorner ? ' corner-stop' : ''}`}>{terminatedAtCorner ? 'vértice' : `${hits} ${hits === 1 ? 'quique' : 'quiques'}`}</p>
           </>
         ) : (
           <>
