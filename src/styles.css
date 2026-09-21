@@ -19,9 +19,11 @@ button { color: inherit; }
 .app-shell { min-height: 100svh; display: grid; grid-template-rows: auto 1fr auto; padding: 1.5rem clamp(1rem, 3.2vw, 3rem); gap: 1.35rem; background: #10191d; }
 .topbar, .controls { width: min(100%, 1180px); margin: 0 auto; display: flex; align-items: center; }
 .topbar { justify-content: space-between; }
-.wordmark { appearance: none; padding: 0; border: 0; background: transparent; color: var(--mist-mid); text-decoration: none; font-family: ui-rounded, "Arial Rounded MT Bold", sans-serif; font-size: clamp(1.35rem, 2.4vw, 1.75rem); letter-spacing: 0; font-weight: 900; line-height: 1; transform: rotate(-2deg); cursor: pointer; }
+.wordmark { appearance: none; padding: 0; border: 0; background: transparent; color: var(--mist-mid); display: inline-flex; align-items: center; gap: .55rem; text-decoration: none; font-family: ui-rounded, "Arial Rounded MT Bold", sans-serif; font-size: clamp(1.35rem, 2.4vw, 1.75rem); letter-spacing: 0; font-weight: 900; line-height: 1; transform: rotate(-2deg); cursor: pointer; }
 .wordmark:focus-visible { outline: 2px solid var(--mist-mid); outline-offset: 5px; border-radius: 3px; }
-.wordmark span { color: var(--mist-light); }
+.wordmark-logo { width: clamp(2rem, 3.4vw, 2.65rem); height: clamp(2rem, 3.4vw, 2.65rem); object-fit: contain; }
+.wordmark-copy { color: var(--mist-mid); }
+.wordmark-copy strong { color: var(--mist-light); }
 .wordmark i { display: inline-block; width: .38rem; height: .38rem; margin-left: .1rem; border-radius: 50%; background: var(--mist-dark); vertical-align: top; }
 .mode-label, .status { color: var(--mist-mid); font-size: .73rem; letter-spacing: .04em; text-transform: uppercase; margin: 0; font-weight: 800; }
 .reset-button { border: 2px solid var(--mist-dark); border-radius: 999px; background: var(--mist-mid); color: #10191d; padding: .42rem .85rem; cursor: pointer; font-size: .8rem; font-weight: 800; box-shadow: 2px 2px 0 var(--mist-dark); }

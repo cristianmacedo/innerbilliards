@@ -671,7 +671,10 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <button className="wordmark" onClick={resetAll} aria-label="innerbilliards, reiniciar mesa"><span>inner</span>billiards<i /></button>
+        <button className="wordmark" onClick={resetAll} aria-label="innerbilliards, reiniciar mesa">
+          <img className="wordmark-logo" src="/brand/innerbilliards.png" alt="" />
+          <span className="wordmark-copy"><strong>inner</strong>billiards<i /></span>
+        </button>
         <button className="reset-button" onClick={resetAll}>Reiniciar</button>
       </header>
 
