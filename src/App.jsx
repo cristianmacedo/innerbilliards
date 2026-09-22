@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Check, ChevronDown, Pencil, RotateCcw, Trash2, X } from 'lucide-react'
 import { bounceVelocity, buildMotion, motionStatistics, pointAlongMotion } from './motion'
 
 const initialShot = { ball: { x: 0.31, y: 0.62 }, aim: { x: 0.76, y: 0.36 } }
@@ -611,6 +612,9 @@ export default function App() {
   const canvasRef = useRef(null)
   const cueCanvasRef = useRef(null)
   const dragRef = useRef(null)
+  const editSnapshotRef = useRef(null)
+  const hasSeenEditorTipRef = useRef(false)
+  const editHistoryRef = useRef({ undo: [], redo: [] })
   const audioRef = useRef(null)
   const mutedRef = useRef(false)
   const impactProgressesRef = useRef([])
@@ -631,6 +635,45 @@ export default function App() {
   const [statsOpen, setStatsOpen] = useState(false)
   const [statistics, setStatistics] = useState(null)
   const [terminatedAtCorner, setTerminatedAtCorner] = useState(false)
+  const [shapeMenuOpen, setShapeMenuOpen] = useState(false)
+  const [editorTip, setEditorTip] = useState(false)
+  const [, setHistoryVersion] = useState(0)
+  const [showEditLabel, setShowEditLabel] = useState(() => window.sessionStorage.getItem('innerbilliards-edit-entry-seen') !== 'true')
+
+  function captureEditState() {
+    return { shape: cloneShape(shape), shot: { ball: { ...shot.ball }, aim: { ...shot.aim } }, geometryId }
+  }
+
+  function recordEditState() {
+    const history = editHistoryRef.current
+    history.undo.push(captureEditState())
+    history.redo = []
+    setHistoryVersion((version) => version + 1)
+  }
+
+  function restoreEditState(snapshot) {
+    setShape(snapshot.shape)
+    setShot(snapshot.shot)
+    setGeometryId(snapshot.geometryId)
+    setSelectedPoint(null)
+    setShapeMenuOpen(false)
+  }
+
+  function undoEdit() {
+    const history = editHistoryRef.current
+    if (!history.undo.length) return
+    history.redo.push(captureEditState())
+    restoreEditState(history.undo.pop())
+    setHistoryVersion((version) => version + 1)
+  }
+
+  function redoEdit() {
+    const history = editHistoryRef.current
+    if (!history.redo.length) return
+    history.undo.push(captureEditState())
+    restoreEditState(history.redo.pop())
+    setHistoryVersion((version) => version + 1)
+  }
 
   const renderTable = useCallback(() => {
     if (!canvasRef.current || !cueCanvasRef.current) return
@@ -734,6 +777,7 @@ export default function App() {
     const { normalized, rect } = normalizeEvent(event)
     const safe = safePoint(normalized, rect)
     if (dragRef.current?.type === 'vertex') {
+      if (!dragRef.current.recorded) { recordEditState(); dragRef.current.recorded = true }
       setGeometryId('custom')
       setShape((current) => current.map((point, index) => {
         if (index !== dragRef.current.index) return point
@@ -748,6 +792,7 @@ export default function App() {
       return
     }
     if (dragRef.current?.type === 'handle') {
+      if (!dragRef.current.recorded) { recordEditState(); dragRef.current.recorded = true }
       setGeometryId('custom')
       setShape((current) => current.map((point, index) => index === dragRef.current.index
         ? { ...point, [dragRef.current.handle]: safe }
@@ -763,6 +808,8 @@ export default function App() {
     setHintVisible(false)
 
     if (mode === 'edit') {
+      setEditorTip(false)
+      setShapeMenuOpen(false)
       const space = canvasSpace(rect.width, rect.height)
       const pixelShape = shape.map(space.toPixels)
       const selected = selectedPoint === null ? null : shape[selectedPoint]
@@ -801,12 +848,13 @@ export default function App() {
       })
 
       if (nearestEdge) {
+        recordEditState()
         const inserted = safePoint(space.fromPixels(nearestEdge.point), rect)
         const newIndex = nearestEdge.index + 1
         setGeometryId('custom')
         setShape((current) => [...current.slice(0, newIndex), inserted, ...current.slice(newIndex)])
         setSelectedPoint(newIndex)
-        dragRef.current = { type: 'vertex', index: newIndex }
+        dragRef.current = { type: 'vertex', index: newIndex, recorded: true }
       } else {
         setSelectedPoint(null)
       }
@@ -825,6 +873,8 @@ export default function App() {
   }
 
   function resetAll() {
+    editSnapshotRef.current = null
+    editHistoryRef.current = { undo: [], redo: [] }
     setShot(initialShot)
     setShape(initialShape)
     setGeometryId('rectangle')
@@ -832,22 +882,84 @@ export default function App() {
     setSelectedPoint(null)
     setIsPlaying(false)
     setAnimationProgress(0)
+    setMode('play')
+  }
+
+  function beginEditing() {
+    editSnapshotRef.current = { shape: cloneShape(shape), shot: { ball: { ...shot.ball }, aim: { ...shot.aim } }, geometryId }
+    editHistoryRef.current = { undo: [], redo: [] }
+    setIsPlaying(false)
+    setAnimationProgress(0)
+    setStatsOpen(false)
+    setSelectedPoint(null)
+    setHintVisible(false)
+    setEditorTip(!hasSeenEditorTipRef.current)
+    hasSeenEditorTipRef.current = true
+    setShowEditLabel(false)
+    window.sessionStorage.setItem('innerbilliards-edit-entry-seen', 'true')
+    setMode('edit')
+  }
+
+  function cancelEditing() {
+    const snapshot = editSnapshotRef.current
+    if (snapshot) {
+      setShape(snapshot.shape)
+      setShot(snapshot.shot)
+      setGeometryId(snapshot.geometryId)
+    }
+    editSnapshotRef.current = null
+    editHistoryRef.current = { undo: [], redo: [] }
+    setShapeMenuOpen(false)
+    setEditorTip(false)
+    setSelectedPoint(null)
+    setHintVisible(false)
+    setMode('play')
+  }
+
+  function finishEditing() {
+    const boundary = sampleShape(shape)
+    if (!pointInPolygon(shot.ball, boundary)) setShot((current) => ({ ...current, ball: polygonCenter(boundary) }))
+    editSnapshotRef.current = null
+    editHistoryRef.current = { undo: [], redo: [] }
+    setShapeMenuOpen(false)
+    setEditorTip(false)
+    setSelectedPoint(null)
+    setHintVisible(false)
+    setMode('play')
   }
 
   function removeSelectedPoint() {
     if (selectedPoint === null || shape.length <= 3) return
+    recordEditState()
     setGeometryId('custom')
     setShape((current) => current.filter((_, index) => index !== selectedPoint))
     setSelectedPoint(null)
   }
 
   function applyPreset(preset) {
+    recordEditState()
     const nextShape = cloneShape(preset.shape)
     const boundary = sampleShape(nextShape)
     setShape(nextShape)
     setGeometryId(preset.id)
     setShot((current) => pointInPolygon(current.ball, boundary) ? current : { ...current, ball: polygonCenter(boundary) })
     setSelectedPoint(null)
+    setShapeMenuOpen(false)
+    setEditorTip(false)
+  }
+
+  function updateSelectedCoordinate(axis, value) {
+    if (selectedPoint === null || !Number.isFinite(value)) return
+    recordEditState()
+    setGeometryId('custom')
+    setShape((current) => current.map((point, index) => {
+      if (index !== selectedPoint) return point
+      const next = Math.max(0.035, Math.min(0.965, value / 100))
+      const delta = next - point[axis]
+      return { ...point, [axis]: next,
+        in: point.in ? { ...point.in, [axis]: point.in[axis] + delta } : undefined,
+        out: point.out ? { ...point.out, [axis]: point.out[axis] + delta } : undefined }
+    }))
   }
 
   function togglePlayback() {
@@ -879,12 +991,56 @@ export default function App() {
 
   function toggleCurves() {
     const curved = shape.some((point) => point.in || point.out)
+    recordEditState()
     setGeometryId('custom')
     setShape(curved
       ? shape.map(({ x, y }) => ({ x, y }))
       : smoothShape(shape))
     setSelectedPoint(null)
   }
+
+  function toggleSelectedCurve() {
+    if (selectedPoint === null) return
+    recordEditState()
+    setGeometryId('custom')
+    setShape((current) => {
+      const smoothed = smoothShape(current)
+      return current.map((point, index) => index === selectedPoint
+        ? (point.in || point.out ? { x: point.x, y: point.y } : smoothed[index])
+        : point)
+    })
+  }
+
+  useEffect(() => {
+    if (!editorTip) return undefined
+    const timeout = window.setTimeout(() => setEditorTip(false), 6500)
+    return () => window.clearTimeout(timeout)
+  }, [editorTip])
+
+  useEffect(() => {
+    if (!showEditLabel) return undefined
+    const timeout = window.setTimeout(() => setShowEditLabel(false), 5000)
+    return () => window.clearTimeout(timeout)
+  }, [showEditLabel])
+
+  useEffect(() => {
+    if (mode !== 'edit') return undefined
+    function onKeyDown(event) {
+      const typing = event.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)
+      if (!typing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) redoEdit()
+        else undoEdit()
+      } else if (event.key === 'Escape') {
+        if (shapeMenuOpen) setShapeMenuOpen(false)
+        else if (selectedPoint !== null) setSelectedPoint(null)
+        else cancelEditing()
+      } else if (!typing && event.key === 'Enter') finishEditing()
+      else if (!typing && (event.key === 'Delete' || event.key === 'Backspace')) removeSelectedPoint()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [mode, shapeMenuOpen, selectedPoint, shape, shot, geometryId])
 
   return (
     <main className="app-shell">
@@ -893,7 +1049,10 @@ export default function App() {
           <img className="wordmark-logo" src="/brand/innerbilliards.png" alt="" />
           <span className="wordmark-copy"><strong>inner</strong>billiards<i /></span>
         </button>
-        <button className="reset-button" onClick={resetAll}>Reiniciar</button>
+        <div className="header-actions">
+          {mode === 'play' && <button className={`header-icon-button header-edit-button${showEditLabel ? ' show-once' : ''}`} type="button" onClick={beginEditing} aria-label="Editar mesa"><Pencil size={17} aria-hidden="true" /><span className="header-tooltip" aria-hidden="true">Editar mesa</span></button>}
+          <button className="header-icon-button reset-button" type="button" onClick={resetAll} aria-label="Reiniciar mesa"><RotateCcw size={17} aria-hidden="true" /><span className="header-tooltip" aria-hidden="true">Reiniciar mesa</span></button>
+        </div>
       </header>
 
       <section className="playground" aria-label="Mesa de bilhar interativa">
@@ -908,16 +1067,12 @@ export default function App() {
             onPointerCancel={finishPointer}
           />
           <canvas ref={cueCanvasRef} className="cue-canvas" aria-hidden="true" />
-          {hintVisible && <div className="hint visible">{mode === 'edit' ? 'Arraste um ponto da borda' : 'Arraste a bola ou mire na mesa'}</div>}
+          {hintVisible && <div className="hint visible">Arraste a bola ou mire na mesa</div>}
+          {mode === 'edit' && editorTip && <div className="editor-tip">Arraste os pontos para alterar a forma. Clique numa borda para adicionar um ponto.</div>}
         </div>
       </section>
 
-      <footer className="controls">
-        <div className="mode-control" role="group" aria-label="Modo da mesa">
-          <button aria-pressed={mode === 'play'} onClick={() => { setMode('play'); setSelectedPoint(null); setHintVisible(false) }}>Trajetória</button>
-          <button aria-pressed={mode === 'edit'} onClick={() => { setMode('edit'); setHintVisible(false) }}>Editar mesa</button>
-        </div>
-
+      <footer className={`controls${mode === 'edit' ? ' editing-controls' : ''}`}>
         {mode === 'play' ? (
           <>
             <div className="playback-control">
@@ -956,18 +1111,35 @@ export default function App() {
             <p className={`status${terminatedAtCorner ? ' corner-stop' : ''}`}>{terminatedAtCorner ? 'vértice' : `${hits} ${hits === 1 ? 'quique' : 'quiques'}`}</p>
           </>
         ) : (
-          <>
-            <div className="preset-picker" role="group" aria-label="Formatos prontos">
-              {shapePresets.map((preset) => (
-                <button className="preset-button" key={preset.id} onClick={() => applyPreset(preset)} aria-label={preset.label} title={preset.label}>
-                  <span className={`preset-shape ${preset.id}`} aria-hidden="true" />
-                </button>
-              ))}
+          <div className="editor-dock" role="toolbar" aria-label="Edição da mesa">
+            {selectedPoint !== null && !shapeMenuOpen && <div className="point-tools" aria-label={`Ponto ${selectedPoint + 1}`}>
+              <span className="point-tools-title">Ponto {selectedPoint + 1}</span>
+              <div className="point-type" role="group" aria-label="Tipo do ponto">
+                <button type="button" aria-pressed={!shape[selectedPoint]?.in && !shape[selectedPoint]?.out} onClick={() => { if (shape[selectedPoint]?.in || shape[selectedPoint]?.out) toggleSelectedCurve() }}>Reto</button>
+                <button type="button" aria-pressed={Boolean(shape[selectedPoint]?.in || shape[selectedPoint]?.out)} onClick={() => { if (!shape[selectedPoint]?.in && !shape[selectedPoint]?.out) toggleSelectedCurve() }}>Suave</button>
+              </div>
+              <label>X <input type="number" min="3.5" max="96.5" step="0.1" value={Math.round(shape[selectedPoint].x * 1000) / 10} onChange={(event) => updateSelectedCoordinate('x', Number(event.target.value))} /></label>
+              <label>Y <input type="number" min="3.5" max="96.5" step="0.1" value={Math.round(shape[selectedPoint].y * 1000) / 10} onChange={(event) => updateSelectedCoordinate('y', Number(event.target.value))} /></label>
+              <button className="point-delete" type="button" onClick={removeSelectedPoint} disabled={shape.length <= 3} aria-label="Remover ponto" title="Remover ponto"><Trash2 size={16} aria-hidden="true" /></button>
+            </div>}
+            <button className="editor-cancel" type="button" onClick={cancelEditing}><X size={16} aria-hidden="true" /> Cancelar</button>
+            <div className="shape-anchor">
+              <button className="shape-trigger" type="button" aria-expanded={shapeMenuOpen} aria-controls="shape-menu" onClick={() => { setShapeMenuOpen((open) => !open); setEditorTip(false) }}>
+                <span><small>FORMA</small>{geometryId === 'custom' ? 'Forma livre' : shapePresets.find((preset) => preset.id === geometryId)?.label}</span>
+                <ChevronDown size={16} aria-hidden="true" />
+              </button>
+              {shapeMenuOpen && <div className="shape-menu" id="shape-menu" role="menu" aria-label="Escolher forma">
+                <button type="button" role="menuitemradio" aria-checked={geometryId === 'custom'} onClick={() => { setGeometryId('custom'); setShapeMenuOpen(false) }}>Forma livre</button>
+                {shapePresets.map((preset) => <button type="button" role="menuitemradio" aria-checked={geometryId === preset.id} key={preset.id} onClick={() => applyPreset(preset)}>{preset.label}</button>)}
+                <div className="shape-menu-divider" />
+                <button type="button" role="menuitem" onClick={() => { toggleCurves(); setShapeMenuOpen(false) }}>{shape.some((point) => point.in || point.out) ? 'Converter em retas' : 'Arredondar contorno'}</button>
+                <div className="shape-menu-divider" />
+                <button type="button" role="menuitem" disabled={!editHistoryRef.current.undo.length} onClick={undoEdit}>Desfazer</button>
+                <button type="button" role="menuitem" disabled={!editHistoryRef.current.redo.length} onClick={redoEdit}>Refazer</button>
+              </div>}
             </div>
-            <button className="tool-button" onClick={toggleCurves}>{shape.some((point) => point.in || point.out) ? 'Usar retas' : 'Suavizar'}</button>
-            <button className="tool-button" onClick={removeSelectedPoint} disabled={selectedPoint === null || shape.length <= 3}>Remover ponto</button>
-            <p className="edit-help">Arraste pontos e alças · clique numa borda para adicionar</p>
-          </>
+            <button className="editor-finish" type="button" onClick={finishEditing} aria-label="Concluir edição" title="Concluir edição"><Check size={20} aria-hidden="true" /></button>
+          </div>
         )}
       </footer>
     </main>
